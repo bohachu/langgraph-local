@@ -1,6 +1,13 @@
 """
 LangGraph ReAct Agent with MCP Tools - Autonomous Agentic AI
 類似 Claude Code 的自主多步驟執行能力
+
+模型建議：
+- ✅ gpt-oss-20b (OpenAI) - 原生支援 function calling
+- ⚠️ gemma-3n (Google) - 不支援原生 function calling，僅輸出 JSON 文字
+- ✅ qwen2.5 (Alibaba) - 支援 function calling
+- ✅ mistral (Mistral AI) - 支援 function calling
+- ✅ llama-3.1/3.2 (Meta) - 支援 function calling
 """
 
 import asyncio
@@ -14,7 +21,7 @@ import os
 class AgenticChatBot:
     """自主執行的 Agentic AI Chatbot"""
 
-    def __init__(self, base_url: str = "http://localhost:1234/v1", model: str = "gemma-3n-e4b-it-mlx"):
+    def __init__(self, base_url: str = "http://localhost:1234/v1", model: str = "gpt-oss-20b-mlx"):
         """
         初始化 ReAct Agent (同步版本，用於非 async 環境)
 
@@ -98,11 +105,171 @@ class AgenticChatBot:
             server_name="filesystem"
         )
 
+        # 修正工具 schema 以符合 OpenAI/LM Studio 格式
+        tools = self._fix_tool_schemas(tools)
+
         return tools
 
-    def chat(self, user_message: str, thread_id: str = "default") -> str:
+    def _fix_tool_schemas(self, tools):
         """
-        與 Agent 對話（支援多輪對話和記憶）
+        修正 MCP 工具 schema 使其符合 OpenAI/LM Studio 格式
+
+        問題：MCP filesystem server 的 inputSchema 只有 $schema，缺少:
+        - type: "object"
+        - properties: {...}
+        - required: [...]
+
+        LM Studio (OpenAI format) 要求這些欄位必須存在
+        """
+
+        # Filesystem server 工具的正確 schema 定義
+        TOOL_SCHEMAS = {
+            "read_file": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "檔案路徑"}
+                },
+                "required": ["path"]
+            },
+            "read_text_file": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "檔案路徑"},
+                    "head": {"type": "integer", "description": "讀取前 N 行（可選）"},
+                    "tail": {"type": "integer", "description": "讀取後 N 行（可選）"}
+                },
+                "required": ["path"]
+            },
+            "read_media_file": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "媒體檔案路徑"}
+                },
+                "required": ["path"]
+            },
+            "read_multiple_files": {
+                "type": "object",
+                "properties": {
+                    "paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "檔案路徑陣列"
+                    }
+                },
+                "required": ["paths"]
+            },
+            "write_file": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "檔案路徑"},
+                    "content": {"type": "string", "description": "檔案內容"}
+                },
+                "required": ["path", "content"]
+            },
+            "edit_file": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "檔案路徑"},
+                    "edits": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "oldText": {"type": "string"},
+                                "newText": {"type": "string"}
+                            },
+                            "required": ["oldText", "newText"]
+                        },
+                        "description": "編輯操作陣列"
+                    },
+                    "dryRun": {"type": "boolean", "description": "僅預覽不執行（可選）"}
+                },
+                "required": ["path", "edits"]
+            },
+            "create_directory": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "目錄路徑"}
+                },
+                "required": ["path"]
+            },
+            "list_directory": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "目錄路徑"}
+                },
+                "required": ["path"]
+            },
+            "list_directory_with_sizes": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "目錄路徑"},
+                    "sortBy": {
+                        "type": "string",
+                        "enum": ["name", "size"],
+                        "description": "排序方式（可選）"
+                    }
+                },
+                "required": ["path"]
+            },
+            "directory_tree": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "目錄路徑"},
+                    "excludePatterns": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "排除模式（可選）"
+                    }
+                },
+                "required": ["path"]
+            },
+            "move_file": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string", "description": "來源路徑"},
+                    "destination": {"type": "string", "description": "目標路徑"}
+                },
+                "required": ["source", "destination"]
+            },
+            "search_files": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "搜尋起始路徑"},
+                    "pattern": {"type": "string", "description": "搜尋模式"},
+                    "excludePatterns": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "排除模式（可選）"
+                    }
+                },
+                "required": ["path", "pattern"]
+            },
+            "get_file_info": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "檔案或目錄路徑"}
+                },
+                "required": ["path"]
+            },
+            "list_allowed_directories": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+
+        for tool in tools:
+            if tool.name in TOOL_SCHEMAS:
+                # 替換為正確的 schema
+                tool.args_schema = TOOL_SCHEMAS[tool.name]
+                print(f"✅ 已修正工具 schema: {tool.name}")
+
+        return tools
+
+    async def achat(self, user_message: str, thread_id: str = "default") -> str:
+        """
+        與 Agent 對話（異步版本，支援多輪對話和記憶）
 
         Agent 會自主執行多步驟來完成任務
 
@@ -121,10 +288,10 @@ class AgenticChatBot:
         print(f"{'='*60}\n")
         print("🤖 Agent 思考並執行中...\n")
 
-        # 執行 ReAct 循環
+        # 執行 ReAct 循環（異步）
         config = {"configurable": {"thread_id": thread_id}}
 
-        result = self.agent.invoke(
+        result = await self.agent.ainvoke(
             {"messages": [HumanMessage(content=user_message)]},
             config=config
         )
@@ -151,6 +318,21 @@ class AgenticChatBot:
         print(f"{'='*60}\n")
 
         return final_message
+
+    def chat(self, user_message: str, thread_id: str = "default") -> str:
+        """
+        與 Agent 對話（同步版本，支援多輪對話和記憶）
+
+        ⚠️ 注意：此方法在異步環境中會有問題，請使用 achat() 代替
+
+        Args:
+            user_message: 使用者訊息/意圖
+            thread_id: 對話執行緒 ID（用於保持對話記憶）
+
+        Returns:
+            Agent 的最終回應
+        """
+        return asyncio.run(self.achat(user_message, thread_id))
 
 
 if __name__ == "__main__":

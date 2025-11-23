@@ -1,0 +1,265 @@
+==========================================
+地雷經驗：LM Studio + LangGraph Function Calling 模型選擇
+==========================================
+
+日期：2025-11-23
+專案：langgraph-local (LangGraph + MCP + LM Studio Agentic AI)
+
+## 問題描述
+
+在使用 LangGraph + MCP + LM Studio 建立 Agentic AI 時，遇到工具調用（function calling）無法正常工作的問題。
+
+## 症狀
+
+1. **Gemma 3n 模型**：
+   - Agent 只輸出 JSON 文字（如 `{"name": "list_directory", "arguments": {...}}`）
+   - 不會觸發實際的工具調用
+   - LangChain 無法解析為 `tool_calls`
+   - ReAct 循環無法完成
+
+2. **錯誤訊息**：
+   ```
+   StructuredTool does not support sync invocation.
+   ```
+   - 這是因為 MCP 工具是異步的，但使用了同步調用
+
+## 根本原因
+
+### 1. Gemma 3/3n 不支援原生 Function Calling
+
+**關鍵發現**：
+- Gemma 3/3n **沒有專用的 tool use token**
+- 僅依賴 prompt engineering 和指令遵循能力
+- 模型只會輸出 JSON 文字，無法觸發 LangChain 的 `tool_calls` 機制
+
+**參考資料**：
+- https://ai.google.dev/gemma/docs/capabilities/function-calling
+- https://www.philschmid.de/gemma-function-calling
+- https://github.com/ollama/ollama/issues/9680
+
+### 2. MCP 工具 Schema 格式問題
+
+**問題**：
+- MCP filesystem server 的 `inputSchema` 只有 `$schema`，缺少：
+  - `"type": "object"`
+  - `"properties": {...}`
+  - `"required": [...]`
+
+**LM Studio 要求**：
+- 必須符合 OpenAI function calling 格式
+- `parameters` 必須包含完整的 JSON Schema
+
+**參考資料**：
+- https://lmstudio.ai/docs/developer/openai-compat/tools
+- https://github.com/openai/openai-agents-python/issues/449
+
+### 3. 異步/同步調用問題
+
+**問題**：
+- MCP 工具是異步的（async）
+- 但在 FastAPI async endpoint 中使用了同步的 `agent.chat()`
+- 導致 `StructuredTool does not support sync invocation` 錯誤
+
+## 解決方案
+
+### ✅ 方案 1：使用支援 Function Calling 的模型（推薦）
+
+**支援 Function Calling 的模型**：
+- ✅ **gpt-oss-20b** (OpenAI) - **推薦！原生支援**
+- ✅ **qwen2.5** (Alibaba) - 支援 function calling
+- ✅ **mistral** (Mistral AI) - 支援 function calling
+- ✅ **llama-3.1/3.2** (Meta) - 支援 function calling
+
+**不支援的模型**：
+- ⚠️ **gemma-3n** (Google) - 不支援原生 function calling
+
+**實作**：
+```python
+# agent.py
+def __init__(self, base_url: str = "http://localhost:1234/v1",
+             model: str = "gpt-oss-20b-mlx"):  # ← 改用 gpt-oss-20b
+```
+
+**參考資料**：
+- https://openai.com/index/introducing-gpt-oss/
+- https://lmstudio.ai/models/openai/gpt-oss-20b
+
+### ✅ 方案 2：修正 MCP 工具 Schema
+
+**問題**：MCP 工具缺少完整的 schema 定義
+
+**解決方式**：手動添加完整的 schema
+
+```python
+def _fix_tool_schemas(self, tools):
+    """修正 MCP 工具 schema 使其符合 OpenAI/LM Studio 格式"""
+
+    TOOL_SCHEMAS = {
+        "list_directory": {
+            "type": "object",  # ← 必須有
+            "properties": {    # ← 必須有
+                "path": {"type": "string", "description": "目錄路徑"}
+            },
+            "required": ["path"]  # ← 必須有
+        },
+        # ... 其他工具
+    }
+
+    for tool in tools:
+        if tool.name in TOOL_SCHEMAS:
+            tool.args_schema = TOOL_SCHEMAS[tool.name]
+
+    return tools
+```
+
+**位置**：`agent.py` 第 106-261 行
+
+### ✅ 方案 3：修正異步調用問題
+
+**問題**：在 async endpoint 中使用了同步的 `agent.chat()`
+
+**解決方式**：創建異步版本的 chat 方法
+
+```python
+# agent.py
+async def achat(self, user_message: str, thread_id: str = "default") -> str:
+    """異步版本的 chat 方法"""
+    result = await self.agent.ainvoke(  # ← 使用 ainvoke
+        {"messages": [HumanMessage(content=user_message)]},
+        config=config
+    )
+    return final_message
+
+# server.py
+@app.post("/chat")
+async def chat(request: ChatRequest):
+    response = await agent.achat(  # ← 使用 await
+        user_message=request.message,
+        thread_id=request.thread_id
+    )
+```
+
+**位置**：
+- `agent.py` 第 263-328 行
+- `server.py` 第 127 行
+
+## 測試驗證
+
+### ✅ 成功的測試結果（gpt-oss-20b）
+
+```bash
+curl -X POST http://localhost:8011/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "請列出當前目錄有哪些 Python 檔案？", "thread_id": "test"}'
+```
+
+**執行軌跡**：
+```
+--- Agent 執行軌跡 ---
+  [0] 👤 使用者: 請列出當前目錄有哪些 Python 檔案？
+  [1] 🔧 Agent 呼叫工具: ['list_directory']  ← ✅ 成功調用！
+  [2] 📊 工具結果: [DIR] .git, [FILE] agent.py...  ← ✅ 返回結果！
+  [3] 🤖 Agent 回應: Here are all the Python files...  ← ✅ 整合回答！
+--- 執行完成 ---
+```
+
+**回應**：成功列出所有 Python 檔案（agent.py, server.py 等）
+
+### ❌ 失敗的測試結果（gemma-3n）
+
+**執行軌跡**：
+```
+--- Agent 執行軌跡 ---
+  [0] 👤 使用者: hello
+  [1] 🤖 Agent 回應: ```tool_request
+{
+  "name": "list_directory",
+  "arguments": {"path": "/"}
+}
+```  ← ❌ 只輸出 JSON 文字，沒有實際調用工具
+--- 執行完成 ---
+```
+
+## 關鍵學習
+
+### 1. 模型選擇至關重要
+
+**不是所有模型都支援 function calling！**
+
+在使用 LangChain/LangGraph 的工具調用功能時，必須：
+1. 確認模型是否有原生 function calling 支援
+2. 檢查模型文檔中的 "tool use" 或 "function calling" 能力
+3. 優先選擇明確標示支援的模型
+
+### 2. Schema 格式必須完整
+
+**OpenAI function calling 格式要求**：
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "tool_name",
+    "description": "...",
+    "parameters": {
+      "type": "object",      // ← 必須
+      "properties": {...},   // ← 必須
+      "required": [...]      // ← 必須
+    }
+  }
+}
+```
+
+### 3. 異步環境必須使用異步調用
+
+- MCP 工具是異步的
+- 在 FastAPI async endpoint 中必須使用 `await agent.ainvoke()`
+- 不能使用同步的 `agent.invoke()`
+
+## 何時應該參考這份文件
+
+### ✅ 參考時機
+
+1. **實作 LangGraph + MCP 整合時**
+   - 選擇模型時
+   - 工具調用無法正常工作時
+   - 看到 `StructuredTool does not support sync invocation` 錯誤時
+
+2. **使用 LM Studio 的 function calling 功能時**
+   - 工具只輸出 JSON 文字，沒有實際調用時
+   - Schema 格式錯誤時（`Invalid discriminator value. Expected 'object'`）
+
+3. **建立 Agentic AI 系統時**
+   - 需要自主多步驟執行能力時
+   - 需要工具調用功能時
+
+## 相關文件
+
+- `/Users/40gpu/coding_projects/langgraph-local/docs/地雷-LangGraph-MCP-整合.txt`
+- `/Users/40gpu/coding_projects/langgraph-local/agent.py`
+- `/Users/40gpu/coding_projects/langgraph-local/server.py`
+- `/Users/40gpu/coding_projects/langgraph-local/CLAUDE.md`
+
+## 總結
+
+### 核心要點
+
+1. **模型選擇**：使用 gpt-oss-20b 而不是 gemma-3n
+2. **Schema 修正**：確保所有工具 schema 包含 type/properties/required
+3. **異步調用**：在 async 環境中使用 `await agent.ainvoke()`
+
+### 成功指標
+
+✅ Agent 執行軌跡中看到 `🔧 Agent 呼叫工具`
+✅ 看到 `📊 工具結果`
+✅ 最終回應包含實際的工具執行結果
+
+### 失敗指標
+
+❌ 只看到 `tool_request` 或 `tool_code` 的 JSON 輸出
+❌ 沒有實際的工具調用軌跡
+❌ `StructuredTool does not support sync invocation` 錯誤
+
+==========================================
+更新：2025-11-23
+版本：1.0
+==========================================

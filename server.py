@@ -123,8 +123,8 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
     try:
-        # 執行 Agent（自主多步驟執行）
-        response = agent.chat(
+        # 執行 Agent（自主多步驟執行）- 使用異步版本
+        response = await agent.achat(
             user_message=request.message,
             thread_id=request.thread_id
         )
