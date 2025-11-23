@@ -1,0 +1,195 @@
+LangGraph + MCP + LM Studio 整合地雷經驗
+==========================================
+
+日期: 2025-11-23
+專案: langgraph-local
+
+## 地雷 1: Agentic AI vs 單次對話的混淆
+
+### 問題
+使用者要求的是「類似 Claude Code 的 agentic AI」，但初期設計成了傳統的單次請求-回應模式。
+
+### 症狀
+- 需要使用者提供所有細節才能執行
+- Agent 會反問使用者問題（例如：「請問要分析哪個檔案?」）
+- 無法自主規劃多步驟任務
+
+### 根本原因
+對 "Agentic AI" 的理解不足，沒有使用正確的 ReAct Pattern。
+
+### 正確做法
+使用 LangGraph 的 `create_react_agent`，這會建立一個自主的 ReAct 循環：
+
+```python
+from langgraph.prebuilt import create_react_agent
+
+# 這會建立自主執行的 agent
+agent = create_react_agent(llm, tools, state_modifier="""
+    你是自主執行的 AI，要自己規劃並執行所有步驟，
+    不要反問使用者細節。
+""")
+```
+
+### ReAct 循環
+```
+使用者意圖
+  ↓
+推理 (Reasoning) - "我需要先列目錄、找檔案、讀取..."
+  ↓
+行動 (Action) - 自動呼叫 list_directory
+  ↓
+觀察 (Observation) - 看到結果
+  ↓
+再次推理 - "現在我知道有哪些檔案了，接下來讀取..."
+  ↓
+行動 - 自動呼叫 read_file
+  ↓
+... (循環直到完成)
+  ↓
+最終回答
+```
+
+### 關鍵差異
+❌ 傳統: user → agent → response (單次)
+✅ Agentic: user → [reasoning → action → observation]* → response (多次循環)
+
+
+## 地雷 2: MCP Client 設定路徑問題
+
+### 問題
+MCP filesystem server 需要明確指定工作目錄。
+
+### 錯誤範例
+```python
+"filesystem": {
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem"]
+    # 缺少路徑參數
+}
+```
+
+### 正確做法
+```python
+import os
+
+"filesystem": {
+    "command": "npx",
+    "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        os.getcwd()  # 或指定特定路徑
+    ]
+}
+```
+
+
+## 地雷 3: LM Studio 模型名稱不一致
+
+### 問題
+在 LM Studio 中載入的模型名稱，與程式碼中指定的名稱可能不同。
+
+### 檢查方式
+```bash
+curl http://localhost:1234/v1/models
+```
+
+### 正確做法
+使用實際的模型 ID：
+```python
+llm = ChatOpenAI(
+    base_url="http://localhost:1234/v1",
+    model="gemma-3n-e4b-it-mlx",  # 必須與 LM Studio 中顯示的一致
+)
+```
+
+
+## 地雷 4: state_modifier 的重要性
+
+### 問題
+沒有設定 state_modifier，導致 Agent 不夠 "agentic"。
+
+### 症狀
+- Agent 會問很多問題
+- 不會主動使用工具
+- 需要明確指示才會行動
+
+### 解決方法
+在 `create_react_agent` 中加入明確的 system prompt：
+
+```python
+agent = create_react_agent(
+    llm,
+    tools,
+    state_modifier="""你是自主執行的 AI 助理。
+
+重要行為準則：
+1. 使用者給你意圖時，要**自主規劃並執行所有必要步驟**
+2. **不要問使用者細節**，直接根據上下文做判斷
+3. 自動使用可用工具完成任務
+4. 持續執行直到任務完成
+5. 給出完整的最終結果
+
+範例：
+使用者: "分析 Python 檔案"
+你應該: 自動列目錄 → 找 .py 檔 → 讀取 → 分析 → 報告
+而不是: "請問要分析哪個檔案？"
+"""
+)
+```
+
+
+## 地雷 5: pip vs pip3 指令
+
+### 問題
+在 macOS 上，`pip` 可能不存在，需要使用 `pip3`。
+
+### 症狀
+```bash
+pip install -r requirements.txt
+# command not found: pip
+```
+
+### 解決方法
+在腳本中使用 `pip3` 或檢查兩者：
+```bash
+if ! command -v pip &> /dev/null; then
+    pip3 install -r requirements.txt
+else
+    pip install -r requirements.txt
+fi
+```
+
+
+## 最佳實踐
+
+### 1. 架構分層
+```
+Terminal Client (使用者介面)
+    ↓
+ReAct Agent (自主推理)
+    ↓
+MCP Adapters (工具轉換)
+    ↓
+MCP Servers (實際工具)
+    ↓
+LM Studio (LLM)
+```
+
+### 2. 測試 Agentic 行為
+給 Agent 一個需要多步驟的任務，看它是否：
+- 自主規劃步驟
+- 自動呼叫多個工具
+- 不反問細節
+- 給出完整結果
+
+### 3. 調整參數
+- `temperature`: 0.7 適合推理任務
+- 模型大小: 至少 4B 參數才有足夠的推理能力
+- `state_modifier`: 明確告訴 Agent 要自主執行
+
+
+## 參考資源
+
+- [LangGraph ReAct Agent 文檔](https://langchain-ai.github.io/langgraph/how-tos/react-agent-from-scratch/)
+- [Building Agentic Flows with LangGraph and MCP](https://www.qodo.ai/blog/building-agentic-flows-with-langgraph-model-context-protocol/)
+- [LangChain MCP Adapters](https://docs.langchain.com/oss/python/langchain/mcp)
