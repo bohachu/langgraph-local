@@ -3,10 +3,9 @@ LangGraph ReAct Agent with MCP Tools - Autonomous Agentic AI
 類似 Claude Code 的自主多步驟執行能力
 """
 
-from typing import Annotated
+import asyncio
 from langchain_openai import ChatOpenAI
 from langchain_mcp_adapters.tools import load_mcp_tools
-from langchain_mcp_adapters.sessions import StdioServerParameters, stdio_client
 from langgraph.prebuilt import create_react_agent
 from langchain_core.messages import HumanMessage, AIMessage
 import os
@@ -17,19 +16,31 @@ class AgenticChatBot:
 
     def __init__(self, base_url: str = "http://localhost:1234/v1", model: str = "gemma-3n-e4b-it-mlx"):
         """
-        初始化 ReAct Agent
+        初始化 ReAct Agent (同步版本，用於非 async 環境)
 
         Args:
             base_url: LM Studio API endpoint
             model: 模型名稱
         """
+        self.base_url = base_url
+        self.model = model
+        self.llm = None
+        self.tools = None
+        self.agent = None
+        self._initialized = False
+
+    async def async_init(self):
+        """異步初始化 (用於 async 環境如 FastAPI)"""
+        if self._initialized:
+            return
+
         print("🤖 初始化 Agentic AI...")
 
         # 設定 LLM (連接本地 LM Studio)
         self.llm = ChatOpenAI(
-            base_url=base_url,
+            base_url=self.base_url,
             api_key="lmstudio",  # LM Studio 不需要真實 API key
-            model=model,
+            model=self.model,
             temperature=0.7,
             streaming=True
         )
@@ -37,31 +48,16 @@ class AgenticChatBot:
         # 設定 MCP Filesystem Server
         print("🔧 載入 MCP 工具...")
 
-        # 建立 stdio 連接到 filesystem server
-        server_params = StdioServerParameters(
-            command="npx",
-            args=["-y", "@modelcontextprotocol/server-filesystem", os.getcwd()],
-            env=None
-        )
-
         # 載入 MCP 工具
-        with stdio_client(server_params) as (read, write):
-            # 取得所有工具
-            self.tools = load_mcp_tools(
-                session=None,
-                connection=(read, write),
-                server_name="filesystem"
-            )
+        self.tools = await self._load_tools()
 
         print(f"✅ 已載入 {len(self.tools)} 個工具")
 
         # 建立 ReAct Agent (核心！)
-        # 這個 agent 會自主決定要執行哪些工具、執行幾次
         self.agent = create_react_agent(
             self.llm,
             self.tools,
-            # 可以自訂 system prompt 來增強 agentic 行為
-            state_modifier="""你是一個自主執行的 AI 助理，類似 Claude Code。
+            prompt="""你是一個自主執行的 AI 助理，類似 Claude Code。
 
 重要行為準則：
 1. 當使用者給你一個意圖或任務時，你要**自主規劃並執行所有必要步驟**
@@ -73,7 +69,6 @@ class AgenticChatBot:
 可用工具包括：
 - 檔案讀取/寫入/列表
 - 目錄操作
-- (未來會加入 bash 執行、ripgrep 等)
 
 範例：
 使用者: "分析當前目錄的 Python 檔案"
@@ -82,7 +77,28 @@ class AgenticChatBot:
 """
         )
 
+        self._initialized = True
         print("🚀 Agent 已就緒！\n")
+
+    def sync_init(self):
+        """同步初始化 (用於同步環境如 CLI)"""
+        asyncio.run(self.async_init())
+
+    async def _load_tools(self):
+        """非同步載入 MCP 工具"""
+        connection = {
+            "transport": "stdio",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem", os.getcwd()],
+        }
+
+        tools = await load_mcp_tools(
+            session=None,
+            connection=connection,
+            server_name="filesystem"
+        )
+
+        return tools
 
     def chat(self, user_message: str, thread_id: str = "default") -> str:
         """
@@ -97,13 +113,15 @@ class AgenticChatBot:
         Returns:
             Agent 的最終回應
         """
+        if not self._initialized:
+            raise RuntimeError("Agent not initialized. Call sync_init() or async_init() first.")
+
         print(f"\n{'='*60}")
         print(f"👤 使用者: {user_message}")
         print(f"{'='*60}\n")
         print("🤖 Agent 思考並執行中...\n")
 
         # 執行 ReAct 循環
-        # Agent 會自動決定要執行哪些工具、執行幾次
         config = {"configurable": {"thread_id": thread_id}}
 
         result = self.agent.invoke(
@@ -111,7 +129,7 @@ class AgenticChatBot:
             config=config
         )
 
-        # 顯示執行過程（讓使用者看到 agentic 行為）
+        # 顯示執行過程
         print("\n--- Agent 執行軌跡 ---")
         for i, msg in enumerate(result["messages"]):
             if isinstance(msg, HumanMessage):
@@ -138,9 +156,7 @@ class AgenticChatBot:
 if __name__ == "__main__":
     # 測試範例
     agent = AgenticChatBot()
+    agent.sync_init()  # 同步初始化
 
     # 範例 1: 自主檔案分析
     agent.chat("請列出當前目錄的所有檔案，並告訴我有哪些 Python 檔案")
-
-    # 範例 2: 多步驟任務
-    # agent.chat("建立一個叫 test.txt 的檔案，內容寫 'Hello Agentic AI'，然後讀取確認")

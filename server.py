@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI):
     # 初始化 Agent
     try:
         agent = AgenticChatBot()
+        await agent.async_init()  # 使用 async 初始化
         print("\n✅ Agent Server 已就緒")
         print(f"📡 監聽位址: http://0.0.0.0:8011")
         print(f"📚 API 文檔: http://localhost:8011/docs")
