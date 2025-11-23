@@ -9,6 +9,7 @@
 - **💬 多輪對話記憶** - 支援上下文理解
 - **🏠 完全本地運行** - 使用 LM Studio，資料不外傳
 - **⚡ ReAct Pattern** - 推理 → 行動 → 觀察的自主循環
+- **🌐 Server/Client 架構** - 支援遠端存取和多客戶端連接（新增）
 
 ## 🏗️ 架構
 
@@ -45,25 +46,48 @@ node --version  # v16+
 
 ## 🚀 快速開始
 
-### 1. 安裝相依套件
+專案支援兩種運行模式：
+
+### 模式一：單機模式（快速測試）
+
+**1. 安裝相依套件**
 ```bash
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 ```
 
-### 2. 確認 LM Studio 正在運行
+**2. 確認 LM Studio 正在運行**
 ```bash
-# 測試連線
 curl http://localhost:1234/v1/models
 ```
 
-### 3. 啟動 Chat Client
+**3. 啟動 Chat Client**
 ```bash
-# 方式 1: 使用啟動腳本（推薦）
 ./start.sh
-
-# 方式 2: 直接執行
+# 或
 python3 chat_client.py
 ```
+
+### 模式二：Server/Client 分離（推薦用於團隊/遠端）
+
+**終端機 1 - 啟動 Server:**
+```bash
+./sh/server.sh
+```
+
+**終端機 2 - 啟動 Client:**
+```bash
+./sh/client.sh
+
+# 連接遠端 Server
+./sh/client.sh http://192.168.1.100:8000
+```
+
+**測試 Server:**
+```bash
+./sh/test.sh
+```
+
+> 📖 詳細說明請參考 [SERVER_CLIENT_GUIDE.md](SERVER_CLIENT_GUIDE.md)
 
 ## 💡 使用範例
 

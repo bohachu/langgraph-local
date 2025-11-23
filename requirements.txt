@@ -4,3 +4,6 @@ langchain-openai>=0.2.0
 langchain-mcp-adapters>=0.1.0
 langgraph-sdk>=0.1.61
 python-dotenv>=1.0.0
+fastapi>=0.104.0
+uvicorn>=0.24.0
+httpx>=0.25.0
