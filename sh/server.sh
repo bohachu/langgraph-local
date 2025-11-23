@@ -69,35 +69,34 @@ else
     fi
 fi
 
-# 檢查 port 8000 是否已被使用
+# 檢查 port 8011 是否已被使用
 echo ""
-echo "🔍 檢查 port 8000..."
-if lsof -Pi :8000 -sTCP:LISTEN -t >/dev/null 2>&1; then
-    echo "⚠️  Port 8000 已被使用"
+echo "🔍 檢查 port 8011..."
+if lsof -Pi :8011 -sTCP:LISTEN -t >/dev/null 2>&1; then
+    echo "❌ Port 8011 已被使用"
     echo ""
-    echo "請選擇:"
-    echo "  1. 關閉現有服務並繼續"
-    echo "  2. 取消"
-    read -r choice
-    if [[ "$choice" == "1" ]]; then
-        echo "正在關閉 port 8000 的服務..."
-        lsof -ti:8000 | xargs kill -9 2>/dev/null || true
-        sleep 2
-    else
-        echo "已取消"
+    echo "正在自動關閉 port 8011 的服務..."
+    lsof -ti:8011 | xargs kill -9 2>/dev/null || true
+    sleep 2
+
+    # 再次檢查
+    if lsof -Pi :8011 -sTCP:LISTEN -t >/dev/null 2>&1; then
+        echo "❌ 無法關閉 port 8011 的服務，請手動處理"
+        echo "   查看佔用: lsof -i :8011"
         exit 1
     fi
+    echo "✅ Port 8011 已清空"
 else
-    echo "✅ Port 8000 可用"
+    echo "✅ Port 8011 可用"
 fi
 
 # 顯示啟動資訊
 echo ""
 echo "===================================="
 echo "📡 Server 設定:"
-echo "   - 監聽位址: http://0.0.0.0:8000"
-echo "   - API 文檔: http://localhost:8000/docs"
-echo "   - 健康檢查: http://localhost:8000/health"
+echo "   - 監聽位址: http://0.0.0.0:8011"
+echo "   - API 文檔: http://localhost:8011/docs"
+echo "   - 健康檢查: http://localhost:8011/health"
 echo ""
 echo "🛑 停止 Server: 按 Ctrl+C"
 echo "===================================="

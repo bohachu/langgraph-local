@@ -31,7 +31,7 @@ if ! python3 -c "import httpx" 2>/dev/null; then
 fi
 
 # 從參數或環境變數取得 server URL
-SERVER_URL="${1:-${AGENT_SERVER_URL:-http://localhost:8000}}"
+SERVER_URL="${1:-${AGENT_SERVER_URL:-http://localhost:8011}}"
 
 echo ""
 echo "🔍 檢查 Server 連線..."
@@ -49,7 +49,7 @@ else
     echo ""
     echo "  2. Server URL 正確"
     echo "     目前設定: $SERVER_URL"
-    echo "     修改方式: ./sh/client.sh http://your-server:8000"
+    echo "     修改方式: ./sh/client.sh http://your-server:8011"
     echo ""
     echo "是否繼續？(y/n)"
     read -r response

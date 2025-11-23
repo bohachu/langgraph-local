@@ -13,7 +13,7 @@ from typing import Optional
 class RemoteAgentClient:
     """遠端 Agent 客戶端"""
 
-    def __init__(self, server_url: str = "http://localhost:8000"):
+    def __init__(self, server_url: str = "http://localhost:8011"):
         """
         初始化遠端客戶端
 
@@ -138,7 +138,7 @@ class RemoteAgentClient:
 class InteractiveCLI:
     """互動式命令列介面"""
 
-    def __init__(self, server_url: str = "http://localhost:8000"):
+    def __init__(self, server_url: str = "http://localhost:8011"):
         self.client = RemoteAgentClient(server_url)
 
     def print_welcome(self):

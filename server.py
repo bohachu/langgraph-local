@@ -32,8 +32,8 @@ async def lifespan(app: FastAPI):
     try:
         agent = AgenticChatBot()
         print("\n✅ Agent Server 已就緒")
-        print(f"📡 監聽位址: http://0.0.0.0:8000")
-        print(f"📚 API 文檔: http://localhost:8000/docs")
+        print(f"📡 監聽位址: http://0.0.0.0:8011")
+        print(f"📚 API 文檔: http://localhost:8011/docs")
         print("="*60 + "\n")
     except Exception as e:
         print(f"❌ 初始化失敗: {e}")
@@ -194,7 +194,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "server:app",
         host="0.0.0.0",
-        port=8000,
+        port=8011,
         reload=False,  # 生產環境關閉 reload
         log_level="info"
     )
