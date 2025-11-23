@@ -5,9 +5,9 @@ LangGraph ReAct Agent with MCP Tools - Autonomous Agentic AI
 
 from typing import Annotated
 from langchain_openai import ChatOpenAI
-from langchain_mcp_adapters import MultiServerMCPClient
+from langchain_mcp_adapters.tools import load_mcp_tools
+from langchain_mcp_adapters.sessions import StdioServerParameters, stdio_client
 from langgraph.prebuilt import create_react_agent
-from langgraph.graph import MessagesState
 from langchain_core.messages import HumanMessage, AIMessage
 import os
 
@@ -34,20 +34,25 @@ class AgenticChatBot:
             streaming=True
         )
 
-        # 設定 MCP Client - 提供檔案系統、bash 等工具
+        # 設定 MCP Filesystem Server
         print("🔧 載入 MCP 工具...")
-        self.mcp_client = MultiServerMCPClient({
-            "filesystem": {
-                "command": "npx",
-                "args": ["-y", "@modelcontextprotocol/server-filesystem", os.getcwd()]
-            }
-            # 可以加入更多 MCP servers:
-            # "bash": {...},
-            # "ripgrep": {...},
-        })
 
-        # 取得所有 MCP 工具
-        self.tools = self.mcp_client.get_tools()
+        # 建立 stdio 連接到 filesystem server
+        server_params = StdioServerParameters(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-filesystem", os.getcwd()],
+            env=None
+        )
+
+        # 載入 MCP 工具
+        with stdio_client(server_params) as (read, write):
+            # 取得所有工具
+            self.tools = load_mcp_tools(
+                session=None,
+                connection=(read, write),
+                server_name="filesystem"
+            )
+
         print(f"✅ 已載入 {len(self.tools)} 個工具")
 
         # 建立 ReAct Agent (核心！)
